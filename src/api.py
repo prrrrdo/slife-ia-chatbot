@@ -5,7 +5,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel 
 from dotenv import load_dotenv
 
 # Importações do LangChain e Google Gemini
@@ -29,6 +30,15 @@ app = FastAPI(
     title="API SLife - Chatbot Universitário",
     description="API para recomendação de imóveis universitários usando RAG + Google Gemini",
     version="1.0.0"
+)
+
+# BLOCO DE SEGURANÇA (CORS)#
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite qualquer origem (navegador, arquivo, etc)
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos os métodos (incluindo OPTIONS)
+    allow_headers=["*"],  # Permite todos os cabeçalhos
 )
 
 # --- Variáveis Globais (O "Cérebro" carregado na memória) ---

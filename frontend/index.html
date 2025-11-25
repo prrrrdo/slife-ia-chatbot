@@ -2343,6 +2343,243 @@
             });
         }
     </script>
+    <div id="slife-chat-widget" class="chat-widget-container">
+        <div class="chat-header">
+            <div class="chat-title">
+                <i class="fas fa-robot"></i> Assistente SLife
+            </div>
+            <button class="close-chat" onclick="toggleChat()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <div id="chat-messages" class="chat-body">
+            <div class="message bot-message">
+                <div class="message-content">
+                    Olá! Sou a IA da S4Life. 🏠🎓<br>
+                    Posso te ajudar a encontrar a moradia ideal. O que você procura hoje?
+                </div>
+            </div>
+        </div>
+    
+        <div class="chat-footer">
+            <input type="text" id="chat-input" placeholder="Ex: Kitnet perto da USP até 1200..." onkeypress="handleEnter(event)">
+            <button class="send-btn" onclick="sendMessage()">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+    
+    <style>
+        /* Estilos do Widget de Chat */
+        .chat-widget-container {
+            display: none; /* Começa oculto */
+            position: fixed;
+            bottom: 90px; /* Acima do botão do WhatsApp */
+            right: 20px;
+            width: 350px;
+            height: 500px;
+            background-color: #fff;
+            border-radius: 12px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.2);
+            z-index: 9999;
+            flex-direction: column;
+            overflow: hidden;
+            font-family: 'Segoe UI', sans-serif;
+            border: 1px solid #e1e1e1;
+        }
+    
+        .chat-header {
+            background-color: #FF5A5F; /* Cor da marca S4Life */
+            color: white;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+    
+        .chat-title { font-weight: 600; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .close-chat { background: none; border: none; color: white; cursor: pointer; font-size: 18px; }
+    
+        .chat-body {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+    
+        .message { display: flex; width: 100%; margin-bottom: 5px; }
+        .bot-message { justify-content: flex-start; }
+        .user-message { justify-content: flex-end; }
+    
+        .message-content {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+    
+        .bot-message .message-content {
+            background-color: #fff;
+            border: 1px solid #e0e0e0;
+            color: #333;
+            border-bottom-left-radius: 2px;
+        }
+    
+        .user-message .message-content {
+            background-color: #FF5A5F;
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+    
+        .chat-footer {
+            padding: 10px;
+            background-color: white;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+    
+        #chat-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            outline: none;
+            font-size: 14px;
+        }
+    
+        .send-btn {
+            background-color: #FF5A5F;
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.3s;
+        }
+        .send-btn:hover { background-color: #e04e53; }
+        
+        /* Responsividade para Mobile */
+        @media (max-width: 480px) {
+            .chat-widget-container {
+                width: 90%;
+                right: 5%;
+                bottom: 80px;
+                height: 60vh;
+            }
+        }
+    </style>
+    
+    <script>
+        // --- Lógica de Integração ---
+    
+        document.addEventListener("DOMContentLoaded", function() {
+            // 1. Intercepta o clique no botão do WhatsApp existente
+            const whatsappBtn = document.querySelector('.whatsapp-btn');
+            if (whatsappBtn) {
+                whatsappBtn.onclick = function(e) {
+                    e.preventDefault(); // Impede de abrir o link original
+                    toggleChat();
+                };
+            }
+        });
+    
+        function toggleChat() {
+            const widget = document.getElementById('slife-chat-widget');
+            // Alterna entre mostrar (flex) e esconder (none)
+            if (widget.style.display === 'none' || widget.style.display === '') {
+                widget.style.display = 'flex';
+                document.getElementById('chat-input').focus();
+            } else {
+                widget.style.display = 'none';
+            }
+        }
+    
+        function formatarTextoIA(texto) {
+            // Transforma Markdown (* e \n) em HTML bonito
+            let formatado = texto.replace(/\n/g, '<br>');
+            formatado = formatado.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>'); // Negrito
+            formatado = formatado.replace(/\* (.*?)(<br>|$)/g, '• $1$2'); // Listas
+            return formatado;
+        }
+    
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const msgArea = document.getElementById('chat-messages');
+            const texto = input.value.trim();
+    
+            if (!texto) return;
+    
+            // Adiciona mensagem do usuário
+            msgArea.innerHTML += `
+                <div class="message user-message">
+                    <div class="message-content">${texto}</div>
+                </div>
+            `;
+            
+            input.value = '';
+            msgArea.scrollTop = msgArea.scrollHeight;
+    
+            // Adiciona indicador de digitando
+            const loadingId = 'loading-' + Date.now();
+            msgArea.innerHTML += `
+                <div id="${loadingId}" class="message bot-message">
+                    <div class="message-content" style="color:#888; font-style:italic;">
+                        <i class="fas fa-circle-notch fa-spin"></i> Analisando imóveis...
+                    </div>
+                </div>
+            `;
+            msgArea.scrollTop = msgArea.scrollHeight;
+    
+            try {
+                // CHAMA A SUA API PYTHON
+                const response = await fetch('http://127.0.0.1:8000/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: texto })
+                });
+    
+                const data = await response.json();
+                
+                // Remove o loading e mostra a resposta real
+                document.getElementById(loadingId).remove();
+                
+                msgArea.innerHTML += `
+                    <div class="message bot-message">
+                        <div class="message-content">${formatarTextoIA(data.response)}</div>
+                    </div>
+                `;
+    
+            } catch (error) {
+                document.getElementById(loadingId).remove();
+                msgArea.innerHTML += `
+                    <div class="message bot-message">
+                        <div class="message-content" style="color: red;">
+                            Erro ao conectar com a IA. Verifique se o terminal Python está rodando.
+                        </div>
+                    </div>
+                `;
+                console.error('Erro API:', error);
+            }
+            
+            msgArea.scrollTop = msgArea.scrollHeight;
+        }
+    
+        function handleEnter(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
+    </script>
 </body>
 </html>
                         
