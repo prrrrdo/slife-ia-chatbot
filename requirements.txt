@@ -1,0 +1,9 @@
+pandas
+langchain
+langchain-google-genai
+langchain-community
+langchain-core
+faiss-cpu
+python-dotenv
+fastapi
+uvicorn
