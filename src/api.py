@@ -77,7 +77,14 @@ async def startup_event():
     vector_store = criar_indice_vetorial(docs)
     
     # Configura o "Retriever" para buscar os 4 imóveis mais relevantes
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+    retriever = vector_store.as_retriever(
+        search_type="mmr", #add diversidade 
+        search_kwargs={
+            "k": 20,
+            "fetch_k": 150,
+            "lambda_mult": 0.6
+            }
+        )
 
     # 3. Configurar o Modelo de Chat (Gemini 1.5 Flash)
     if not os.getenv("GOOGLE_API_KEY"):
