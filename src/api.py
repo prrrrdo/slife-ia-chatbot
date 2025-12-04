@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Adiciona o diretório atual ao path para conseguir importar o app_ia
+# Adiciona o diretório atual ao path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException
@@ -9,146 +9,161 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel 
 from dotenv import load_dotenv
 
-# Importações do LangChain e Google Gemini
+# --- NOVAS IMPORTAÇÕES PARA MEMÓRIA ---
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
 
-# Importamos as funções do seu motor de busca
-# Se der erro de importação, verifique se o arquivo app_ia.py está na mesma pasta
+# Importa funções do motor de busca
 try:
     from app_ia import carregar_dados, criar_indice_vetorial
 except ImportError:
     from src.app_ia import carregar_dados, criar_indice_vetorial
 
-# Carrega variáveis de ambiente
 load_dotenv()
 
-# Inicializa a API
-app = FastAPI(
-    title="API SLife - Chatbot Universitário",
-    description="API para recomendação de imóveis universitários usando RAG + Google Gemini",
-    version="1.0.0"
-)
+app = FastAPI(title="API SLife - Chatbot com Memória", version="1.2.0")
 
-# BLOCO DE SEGURANÇA (CORS)#
+# --- BLOCO DE SEGURANÇA (CORS) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite qualquer origem (navegador, arquivo, etc)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Permite todos os métodos (incluindo OPTIONS)
-    allow_headers=["*"],  # Permite todos os cabeçalhos
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# --- Variáveis Globais (O "Cérebro" carregado na memória) ---
-vector_store = None
-retriever = None
-chat_model = None
-rag_chain = None
+# --- Gestão de Sessão (Memória RAM) ---
+# Aqui guardamos o histórico de cada usuário enquanto o servidor roda
+store = {}
 
-# --- Modelo de Dados (O que o Frontend envia) ---
+def get_session_history(session_id: str) -> InMemoryChatMessageHistory:
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
+
+# --- Variáveis Globais ---
+rag_chain_with_history = None
+
 class UserRequest(BaseModel):
     message: str
+    session_id: str = "usuario_padrao" # Identificador da conversa
 
-# --- Evento de Inicialização (Roda apenas 1 vez ao ligar o servidor) ---
 @app.on_event("startup")
 async def startup_event():
-    global vector_store, retriever, chat_model, rag_chain
-    print("Inicializando a API do Chatbot SLife...")
+    global rag_chain_with_history
+    print("🚀 Inicializando API com Memória...")
 
-    # 1. Definir caminho do CSV
-    # Tenta achar o arquivo tanto rodando da raiz quanto da pasta src
     caminho_csv = "data/slife_imoveis.csv"
     if not os.path.exists(caminho_csv):
         caminho_csv = "../data/slife_imoveis.csv"
     
     if not os.path.exists(caminho_csv):
-        print(f"ERRO CRÍTICO: Arquivo {caminho_csv} não encontrado!")
+        print("❌ ERRO: CSV não encontrado.")
         return
 
-    # 2. Carregar dados e criar índice (Motor de Busca)
-    print("Carregando catálogo de imóveis...")
+    # 1. Carregar Dados
+    print("📂 Carregando dados...")
     docs = carregar_dados(caminho_csv)
     if not docs:
-        print("Falha ao carregar documentos.")
-        return
-    
-    vector_store = criar_indice_vetorial(docs)
-    
-    # Configura o "Retriever" para buscar os 4 imóveis mais relevantes
-    retriever = vector_store.as_retriever(
-        search_type="mmr", #add diversidade 
-        search_kwargs={
-            "k": 20,
-            "fetch_k": 150,
-            "lambda_mult": 0.6
-            }
-        )
-
-    # 3. Configurar o Modelo de Chat (Gemini 1.5 Flash)
-    if not os.getenv("GOOGLE_API_KEY"):
-        print("ERRO: GOOGLE_API_KEY não configurada no .env")
+        print("❌ Falha ao carregar documentos.")
         return
         
+    vector_store = criar_indice_vetorial(docs)
+    
+    # 2. Retriever com MMR (Diversidade)
+    # k=20 com MMR é suficiente se a busca for bem feita
+    retriever = vector_store.as_retriever(
+        search_type="mmr", 
+        search_kwargs={"k": 20, "fetch_k": 100, "lambda_mult": 0.6}
+    )
+
+    if not os.getenv("GOOGLE_API_KEY"):
+        print("❌ ERRO: Sem API KEY.")
+        return
+        
+    # Modelo Gemini (Usando a versão flash estável)
     chat_model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
 
-    # 4. Criar o Prompt (A Personalidade da SLife)
-    # Baseado no perfil da empresa: jovem, universitária, focada em praticidade [cite: 78, 79]
-    template = """
-    Você é o assistente virtual oficial da SLife, especializado em moradia universitária.
-    Seu tom deve ser jovem, prestativo e direto.
+    # --- CÉREBRO DA MEMÓRIA ---
     
-    Sua missão é ajudar estudantes a encontrar o imóvel ideal no nosso catálogo.
+    # PASSO A: Reformulador de Perguntas
+    # Se o usuário diz "E com lavanderia?", a IA transforma em "Imóveis em [cidade anterior] com lavanderia"
+    contextualize_q_system_prompt = """
+    Dado um histórico de chat e a última pergunta do usuário 
+    (que pode fazer referência ao contexto passado), formule uma pergunta autônoma 
+    que possa ser entendida sem o histórico. NÃO responda à pergunta, 
+    apenas a reformule se necessário ou retorne-a como está.
+    """
     
-    INSTRUÇÕES:
-    1. Use APENAS as informações dos "Imóveis Encontrados" abaixo para responder.
-    2. Se os imóveis listados não forem exatamente o que o usuário pediu, explique isso educadamente e mostre a opção mais próxima.
-    3. Sempre mencione o ID do imóvel, o valor e a cidade.
-    4. Se a informação não estiver no contexto, diga que não encontrou nada com essas características específicas no momento.
+    contextualize_q_prompt = ChatPromptTemplate.from_messages([
+        ("system", contextualize_q_system_prompt),
+        ("placeholder", "{chat_history}"),
+        ("human", "{input}"),
+    ])
     
-    Imóveis Encontrados (Contexto):
+    history_aware_retriever = (
+        contextualize_q_prompt
+        | chat_model
+        | StrOutputParser()
+        | retriever
+    )
+
+    # PASSO B: Resposta Final (QA)
+    qa_system_prompt = """
+    Você é o assistente da SLife (Moradia Universitária). Jovem, útil e direto.
+    
+    DIRETRIZES:
+    1. Use os contextos abaixo para responder.
+    2. Se o usuário pediu perfil (silêncio vs festa), filtre mentalmente.
+    3. Cite ID, Cidade e Valor das opções.
+    
+    CONTEXTO:
     {context}
     
-    Pergunta do Estudante:
-    {question}
-    
-    Sua Resposta (em português do Brasil):
+    Responda em português do Brasil.
     """
-    prompt = PromptTemplate.from_template(template)
+    
+    qa_prompt = ChatPromptTemplate.from_messages([
+        ("system", qa_system_prompt),
+        ("placeholder", "{chat_history}"), # Histórico entra aqui
+        ("human", "{input}"),
+    ])
 
-    # 5. Montar a Chain (Fluxo de IA)
-    def format_docs(docs):
-        return "\n\n".join([d.page_content for d in docs])
-
-    rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
+    question_answer_chain = (
+        RunnablePassthrough.assign(context=history_aware_retriever)
+        | qa_prompt
         | chat_model
         | StrOutputParser()
     )
-    print("API SLife carregada e pronta para receber conexões!")
 
-# --- Rotas da API ---
-
-@app.get("/")
-def read_root():
-    """Rota de teste para ver se a API está online"""
-    return {"status": "online", "service": "SLife AI Chatbot"}
+    # PASSO C: Chain Final com Gestão de Histórico
+    rag_chain_with_history = RunnableWithMessageHistory(
+        question_answer_chain,
+        get_session_history,
+        input_messages_key="input",
+        history_messages_key="chat_history",
+    )
+    
+    print("✅ API com Memória Pronta!")
 
 @app.post("/chat")
 async def chat_endpoint(request: UserRequest):
-    """Rota principal que recebe a pergunta e devolve a resposta da IA"""
-    global rag_chain
-    
-    if not rag_chain:
-        raise HTTPException(status_code=500, detail="Sistema de IA não foi inicializado corretamente.")
+    if not rag_chain_with_history:
+        raise HTTPException(status_code=500, detail="IA off.")
     
     try:
-        print(f"Pergunta recebida: {request.message}")
-        # Chama a IA para processar
-        resposta = rag_chain.invoke(request.message)
+        print(f"📩 Msg: {request.message} | Session: {request.session_id}")
+        
+        # Invocamos passando o session_id para recuperar o histórico correto
+        resposta = rag_chain_with_history.invoke(
+            {"input": request.message},
+            config={"configurable": {"session_id": request.session_id}}
+        )
         return {"response": resposta}
     except Exception as e:
-        print(f"Erro no processamento: {e}")
+        print(f"Erro: {e}")
         raise HTTPException(status_code=500, detail=str(e))
