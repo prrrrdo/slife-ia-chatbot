@@ -1,27 +1,39 @@
+# app_ia.py
+
 import os
 import pandas as pd
 from dotenv import load_dotenv
-# Importações específicas do Google Gemini
+
+# --- IMPORTAÇÕES DO LANGCHAIN ---
+# GoogleGenerativeAIEmbeddings: É a ferramenta que traduz texto (palavras) para vetores (listas de números).
+# Isso é essencial para a máquina entender "significado".
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+# FAISS (Facebook AI Similarity Search): É o banco de dados vetorial.
+# Ele armazena os números gerados acima e permite buscas ultra-rápidas por similaridade.
 from langchain_community.vectorstores import FAISS
+
+# Document: Objeto padrão do LangChain para guardar texto + metadados.
 from langchain_core.documents import Document
 
-# Carrega as variáveis de ambiente
+# Carrega variáveis do arquivo .env (onde sua senha/API Key deve estar segura)
 load_dotenv()
 
-# Verifica se a chave da API existe
+# Verificação de segurança básica para garantir que a chave existe antes de prosseguir
 if not os.getenv("GOOGLE_API_KEY"):
     print("ERRO: A chave GOOGLE_API_KEY não foi encontrada no arquivo .env")
     exit()
 
 def carregar_dados(caminho_arquivo):
     """
-    Lê o CSV da SLife e prepara o texto para a IA.
+    Função ETL (Extract, Transform, Load):
+    Lê o CSV, transforma linhas em texto descritivo e carrega em objetos Document.
     """
     print(f"Carregando dados de: {caminho_arquivo}...")
     
     try:
-        # O CSV da SLife usa ponto e vírgula (;) como separador
+        # Lê o CSV. Importante: no Brasil usamos ';' como separador e ',' para decimais.
+        # Sem isso, o Python acharia que "1.500,00" são duas colunas diferentes.
         df = pd.read_csv(caminho_arquivo, sep=';', decimal=',')
     except FileNotFoundError:
         print(f"Erro: Arquivo não encontrado em {caminho_arquivo}")
@@ -29,8 +41,12 @@ def carregar_dados(caminho_arquivo):
 
     documentos = []
     
+    # Itera sobre cada linha do DataFrame
     for _, row in df.iterrows():
-        # Criamos uma frase descritiva para cada imóvel
+        # --- A MÁGICA ACONTECE AQUI ---
+        # Transformamos dados tabulares em uma "história" (string).
+        # A LLM (Gemini) precisa ler um texto coerente para entender o imóvel.
+        # Se você só passasse os números soltos, ela poderia se confundir.
         texto_descritivo = (
             f"Imóvel tipo {row['tipo']} em {row['cidade']}. "
             f"Valor do aluguel: R$ {row['valor_aluguel']}. "
@@ -42,15 +58,17 @@ def carregar_dados(caminho_arquivo):
             f"Avaliação dos estudantes: {row['nota_avaliacao']} estrelas."
         )
         
-        # Metadados para ajudar na recuperação
+        # Metadados são dados "invisíveis" para a IA na hora de gerar texto, 
+        # mas úteis para filtros (ex: filtrar só imóveis em "Campinas" antes da busca).
         metadados = {
             "id": row['imovel_id'],
             "tipo": row['tipo'],
             "cidade": row['cidade'],
             "valor": float(row['valor_aluguel']),
-            "texto_original": texto_descritivo
+            "texto_original": texto_descritivo # Guardamos o texto original por segurança
         }
         
+        # Cria o objeto Document final
         documentos.append(Document(page_content=texto_descritivo, metadata=metadados))
     
     print(f"{len(documentos)} imóveis processados e prontos para indexação.")
@@ -58,15 +76,19 @@ def carregar_dados(caminho_arquivo):
 
 def criar_indice_vetorial(docs):
     """
-    Cria o 'cérebro' da busca usando Google Gemini Embeddings.
+    Esta função cria o 'cérebro' de busca.
+    Ela pega os textos -> converte em vetores -> guarda no FAISS.
     """
     print("Criando índice vetorial com Google Gemini...")
     
-    # Modelo de Embeddings do Google (gratuito no tier free)
+    # Inicializa o modelo de Embeddings.
+    # O 'models/text-embedding-004' é específico para criar vetores, não para gerar texto de chat.
     embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
     
-    # Cria o banco FAISS
+    # Cria o índice FAISS na memória RAM.
+    # Ele calcula a "impressão digital" matemática de cada imóvel.
     vector_store = FAISS.from_documents(docs, embeddings)
+    
     print("Banco vetorial criado com sucesso!")
     return vector_store
 
